@@ -1,0 +1,49 @@
+---
+title: "Text_Analysis_Lab_1_Writeup"
+author: "Christopher Carbonaro"
+date: "February 1, 2019"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  word_document: default
+---
+# Webscraping with 'rtweet'
+
+## Picking what and where to scrape
+To familiarize myself with the 'rtweet' package, I chose to scrape Twitter for tweets which included the terms *global warming, polar vortex,* and *climate change.* I chose to collect information for these tweets because I predicted this past week's extreme weather conditions would prompt discussion of climate change; one would expect the number of tweets using these terms to increase as temperatures became more extreme during the week. Furthermore, these weather events present an opportunity to examine the semantic differences implicit in the terms *global warming* and *climate change.* There has been a long-standing discussion centered around how the terminology used to describe climate change shapes discussion. Using sentiment analysis, it is possible to examine the extent to which such claims are valid. 
+
+``` {r loading_data, include = FALSE}
+library(rtweet)
+library(maps)
+library(ggplot2)
+weather_tweets <- read_twitter_csv("weather_tweets.csv")
+pos <- read_twitter_csv("pos.csv")
+```
+
+## Examining the data
+By using the following code, we can preview the textual content of the first 10 tweets:
+``` {r tweet_preview, include = TRUE}
+head(weather_tweets$text, n = 10)
+```
+
+We can also plot the frequency of these tweets over time by using the `ts_plot()` function.
+```{r plot_frequency, include = TRUE}
+ts_plot(weather_tweets, color = "blue", size = 1.5) + labs(title = "Number of tweets mentioning 'global warming,'\n 'polar vortex,' or 'climate change'", x = "Date", y = "Number of Tweets")
+```
+
+If the tweets have geocoded information, it is also possible to plot them on a map:
+``` {r mapping, echo = TRUE, warning = FALSE}
+## Setting up parameters for graphing the map
+par(mar = c(0, 0, 0, 0))
+## Draws the a map of the U.S. states.
+maps::map("state", lwd = .25)
+## plot latitude and longitude points onto the map called by the prior function
+  with(pos, points(lng, lat, pch = 20, cex = .75, col = rgb(0, .3, .7, .75)))
+```
+
+## Interpreting the data
+### Tweets by Time
+The `ts_plot()` chart shows that there was a dramatic spike in the number of tweets containing the specified terms between January 28th and January 31st. This correlates with my initial hypothesis, namely that the use of these terms would increase during periods of extreme weather conditions. Weather in the Midwest states was abnormally cold during this period; correspondingly, the use of these terms increased over this time-span.
+
+### Tweets by Location
+Interestingly, the produced map does not show an increased prevalence of these tweets in the north. Rather, the tweets seem to be relatively dispersed throughout the U.S. It is possible that this is indicative of a lack of correlation between those concerned about the extreme weather and their location. However, it is also possible that my lack of a Google maps API has produced inaccurate data; further examination and experimentation with the provided code may be necessary.
