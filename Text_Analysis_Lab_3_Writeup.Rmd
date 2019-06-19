@@ -1,0 +1,189 @@
+---
+title: "Text_Analysis_Lab_3_Writeup"
+author: "Christopher Carbonaro"
+date: "15 February 2019"
+output: word_document
+---
+
+```{r, include=FALSE}
+setwd("C:/Users/Christopher/Dropbox/College/Junior Year Round 2/Spring Semester/Text Analysis/Text_Analysis_Lab_3")
+require(pacman)
+req_packages <- c("quanteda", "devtools", "stringr", "NLP", "tm", "textstem", "textreg", "quanteda.corpora", "slam", "sentimentr", "ggplot2", "reshape2")
+p_load(req_packages, character.only = T)
+```
+# Dictionary-Based Methods and Sentiment Analysis
+
+The collection of *The Guardian* articles in the 'quanteda.corpus' package makes it possible to track the development of the Brexit movement. To do this, one can track the usage of relevant terms in *The Guardian* articles, such as "Brexit," "referendum," "UKIP," and "Farage." Sentiment analysis will allow us to see how Britain's general outlook on the state of affairs, filtered through the lens of *The Guardian*, vary over time.
+
+## Section 1: Selecting and Cleaning Corpora
+We can look at the first document in the 'data_corpus_guardian' corpus by running the following commands:
+```{r}
+guardian_docs <- download("data_corpus_guardian")
+guardian_docs <- guardian_docs$documents
+print(guardian_docs$texts[1])
+```
+Note that this is done by converting the corpus to a data frame first. If we want to use inspect() instead, we need to convert it to a tm package corpus. Let's create two corpora; the first will be preprocessed for dictionary-based methods, and the second will be preprocessed for sentiment analysis.
+```{r}
+guardian_docs_tm.1 <- VCorpus(VectorSource(guardian_docs$texts))
+guardian_docs_tm.2 <- VCorpus(VectorSource(guardian_docs$texts))
+```
+### Preprocessing for Dictionary-Based Methods
+To prepare our corpus for dictionary-based methods, start by removing all punctuation. This will make lemmatizing easier. The code below defines the function removeAllPunct() by telling it to replace punctuation in the corpus with a space character.
+```{r}
+removeAllPunct <- function(x) gsub("[[:punct:]]", " ", x)
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, removeAllPunct)
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, PlainTextDocument)
+```
+Next, a similar function can be used to remove non-alphanumeric characters.
+```{r}
+removeSpecialCharacters <- function(x) gsub("[^a-zA-Z0-9 ]", " ", x)
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, removeSpecialCharacters)
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, PlainTextDocument)
+```
+The next step is to remove capital letters.
+```{r}
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, content_transformer(tolower))
+```
+The code below will produce a corpus stripped of numbers:
+```{r}
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, removeNumbers)
+```
+Removing stopwords will produce a DTM which does not list words like "the" or "and" as the most frequently cited terms:
+```{r}
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, removeWords, stopwords("en"))
+```
+Finally, we can strip the text of any whitespace.
+```{r}
+guardian_docs_tm.1 <- tm_map(guardian_docs_tm.1, stripWhitespace)
+```
+Our corpus is now mostly ready for analysis. However, we can lemmatize our terms to look for documents with terms which are related to our dictionary but might not match exactly.
+```{r}
+guardian_docs_tm.1_lem <- convert.tm.to.character(guardian_docs_tm.1)
+guardian_docs_tm.1_lem <- lemmatize_strings(guardian_docs_tm.1_lem, dictionary = lexicon::hash_lemmas)
+guardian_docs$docs_cleaned <- guardian_docs_tm.1_lem
+```
+Why apply the preprocessors in this order? Generally speaking, the order of application matters very little here as long as stripWhitespace is done last. Otherwise, the removal of special characters would leave extra space in the text. The cleaned text of the first document in the corpus is included below:
+```{r}
+head(guardian_docs_tm.1_lem[1])
+```
+
+### Preprocessing for Sentiment Analysis
+Preprocessing the corpus for sentiment analysis involves a bit less wrangling of the text. We will simply make all of the words lowercase, remove numbers, and strip the text of extra whitespace. We preserve punctuation because sentiment analysis' base unit of analysis is the sentence.
+```{r}
+guardian_docs_tm.2 <- tm_map(guardian_docs_tm.2, content_transformer(tolower))
+guardian_docs_tm.2 <- tm_map(guardian_docs_tm.2, removeNumbers)
+guardian_docs_tm.2 <- tm_map(guardian_docs_tm.2, stripWhitespace)
+```
+Again, the order of preprocessors applied matters little here as long as stripWhitespace happens last.
+Finally, we convert the entire corpus to a list of character vectors, primed for sentiment analysis.
+```{r}
+guardian_sentiment <- convert.tm.to.character(guardian_docs_tm.2)
+```
+We can examine the first element of this corpus as well.
+```{r}
+head(guardian_sentiment[1])
+```
+## Section 2: Applying a Custom Dictionary
+To track *The Guardian's* coverage of Brexit, we can make a simple dictionary of a few terms and names which were closely associated with the movement.
+```{r}
+brex_dic <- c("ukip", "brexit", "farage", "referendum")
+```
+Using the str_detect() function, we can filter out documents which do not contain any of these terms.
+```{r}
+guardian_brexit <- guardian_docs[str_detect(guardian_docs$docs_cleaned, "ukip | brexit | farage | referendum"),]
+```
+To find how many documents contained these terms, we can count the number of rows. Each row is a document, and so the total number of rows equals the total number of documents containing one of the terms contained within the dictionary.
+```{r}
+guardian_brexit <- guardian_docs[str_detect(guardian_docs$docs_cleaned, "ukip | brexit | farage | referendum"),]
+print(nrow(guardian_brexit))
+```
+Thus there are 548 documents which contain at least one of the terms in our custom dictionary. Below are the texts of some of these documents
+```{r}
+print(guardian_brexit$texts[2:3])
+```
+We can turn these corpora into DTMs by running the commands below. The first DTM consists of all terms in the cleaned corpus, while the second consists of only the dictionary terms.
+```{r}
+DTM_guardian <- DocumentTermMatrix(guardian_docs_tm.1)
+row.names(DTM_guardian) <- c(1:nrow(DTM_guardian))
+DTM_brex <- as.matrix(DocumentTermMatrix(guardian_docs_tm.1, list(dictionary = brex_dic)))
+row.names(DTM_brex) <- row.names(guardian_docs_tm.1)
+```
+We can examine the term frequency in the first couple of documents by running the commands below.
+```{r}
+head(DTM_brex[1:6,])
+```
+This tells us that out of the first six documents, only the fifth contained one of the terms in our custom dictionary.
+
+Running the code below produces a vector which contains the total number of words in each document:
+```{r}
+total_words <- slam::row_sums(DTM_guardian)
+```
+Similarly, the code below produces a vector which contains the total number of dictionary terms in each document:
+```{r}
+dic_words <- slam::row_sums(DTM_brex)
+```
+We can now create a vector which tells us how frequently these terms appear in each document. The values are the number of dictionary terms divided by the total number of words. In essence, the values signify what proportion of words in the document are dictionary terms. This helps account for long documents, which are more likely to repeatedly use terms.
+```{r}
+dic_freq <- dic_words/total_words
+```
+
+## Section 3: Sentiment Analysis
+To perform sentiment analysis, the corpus preprocessed for sentiment analysis must be parsed into sentences. This is done with the 'sentimentr' package. After parsing each document into sentences, calculate the sentiment polarity for each sentence with the sentiment() function. Normally, one would do this for all documents in the corpus; however, with 6000 documents, this takes a very long time. Consequently, I have only calculated the sentence sentiment for the second document.
+```{r}
+sentences <- get_sentences(guardian_sentiment[1:100])
+sent.sentiment <- sentiment(sentences[[2]])
+```
+
+The following code will create a histogram which plots the sentence polarity for every sentence in the second document. Again, I have tweaked the code to account for the fact that only the sentiment scores for the second document were calculated.
+```{r}
+ggplot(sent.sentiment, 
+       aes(x = element_id, y = sentiment,
+           fill = ifelse(sent.sentiment$sentiment < 0, "0", "1"))) +
+  geom_histogram(stat = "identity") +
+  xlab("Sequence (in Sentences)") + ylab("Sentiment Polarity") +
+  ylim(-1,1) +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold"),
+        legend.position = "none")
+```
+This histogram illustrates the sentiment associated with each sentence in the document. The first bar indicates the sentiment of the first sentence, which is positive. The next two bars represent the sentiment of the second and third sentences, both of which have negative sentiments. These values are plotted for each sentence in the document, of which there are 43.
+
+We can also find exactly which terms are associated with different sentiments:
+```{r}
+ex_sent <- extract_sentiment_terms(guardian_docs$texts[2])
+head(ex_sent)
+```
+
+It is also possible to aggregate the sentiment scores by document. By using the highlight() function, we can see exactly which sentences have positive or negative sentiments associated with them.
+```{r}
+sentiment.byDocument <- sentiment_by(sentences[[2]], by = NULL) 
+highlight(sentiment.byDocument)
+```
+In the highlight document, the green highlights indicate positive sentiment and the red indicate negative sentiment. The higher the score, the more positive the sentiment. The lower the score, the more negative the sentiment. The calculations producing these scores are not perfect e.g. the sentence "the device has two main parts." has a positive sentiment of +.163. This is likely due to the positive sentiment associated with the term 'main,' despite the fact that in reality the sentence seems to be neither positive nor negative.
+
+To conclude, we can use a different tool of sentiment analysis by using the 'syuzhet' package.
+```{r}
+p_load(syuzhet)
+```
+We can use this package to categorize the sentiment of each word in the documents. The code below does this for the first 100 documents (I've elected to not categorize all 6000 documents for the sake of memory preservation). These values are then normalized by wordcount and plotted on a barchart.
+```{r}
+emotions <- get_nrc_sentiment(guardian_sentiment[1:100])
+emotions.count <- emotions/total_words[1:100]
+emotions <- melt(emotions.count, measure.vars = colnames(emotions.count))
+
+ggplot(emotions[which(emotions$variable!="positive" & emotions$variable!="negative"),], 
+       aes(x = as.factor(variable), y = value*100,
+           fill = as.factor(variable))) +
+  geom_boxplot(aes(fill = as.factor(variable)),
+               outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.2) +
+  labs(y = "% of document words that are Emotion Words", x = "") +
+  theme_bw() +
+  theme(axis.title = element_text(face = "bold"),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.title = element_text(face = "bold"),
+        legend.position = "right") +
+  guides(fill = guide_legend(title = "Emotion"))
+```
+Broadly, the plot tells us that documents 1 through 100 have more words with the sentiment of trust than any other (on average). Other common sentiments include fear and anticipation.

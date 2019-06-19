@@ -1,0 +1,327 @@
+---
+title: "Text_Analysis_Lab_5_Writeup"
+author: "Christopher Carbonaro"
+date: "1 March 2019"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+setwd("C:/Users/Christopher/Dropbox/College/Junior Year Round 2/Spring Semester/Text Analysis/Text_Analysis_Lab_5")
+
+require(pacman)
+
+p_load(tidyverse, 
+       tm, 
+       e1071, 
+       gmodels, 
+       textstem, 
+       textreg, 
+       caret, 
+       esquisse, 
+       text2vec, 
+       factoextra)
+```
+# Supervised and Unsupervised Learning
+## Section 1: Classification
+
+In this section, we will construct a naive Bayes classifier to make predictions about the nature of never-before-seen tweets. First, we must import our data and preprocess it. The general process for doing so is outlined below. To keep this report short, I will not delineate how I defined my custom functions. The construction of these functions can be found in the documentation for this lab.
+```{r preprocess, include=F}
+disaster_raw <- readRDS(file = "disaster_classify.rds") 
+disaster_corpus <- VCorpus(VectorSource(disaster_raw$text))
+removeURL <- content_transformer(function(x){
+  gsub(pattern = "http[^[:space:]]*", 
+       replacement = " ", 
+       x = x)
+  }
+)
+
+removeUserNames <- content_transformer(function(x){
+  gsub(pattern = "@\\w+",
+       replacement = " ",
+       x = x)
+  }
+)
+
+removeSpecialChar <- content_transformer(function(x){
+  gsub(pattern = "[^\x20-\x7E]",
+       replacement = " ",
+       x = x)
+  }
+)
+
+removeRogueTags <- content_transformer(function(x){
+  gsub(pattern = "# ",
+       replacement = " ",
+       x = x)
+  }
+)
+
+attachHash <- content_transformer(function(x){
+  gsub(pattern = "# ",
+       replacement = "#",
+       x = x)
+  }
+)
+
+removeMostPunctuation <- content_transformer(function(x){
+  x <- gsub("#", "\002", x)
+  x <- gsub("[[:punct:]]+", "", x)
+  x <- gsub("\002", "#", x, fixed = TRUE)
+  }
+)
+```
+
+```{r cleaning, include=T}
+disaster_corpus_cleaned <- tm_map(disaster_corpus, removeURL) %>%
+  tm_map(removeUserNames) %>%
+  tm_map(removeSpecialChar) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removeMostPunctuation) %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removeWords, stopwords(kind = "en")) %>%
+  tm_map(removeRogueTags) %>%
+  tm_map(stripWhitespace) %>%
+  convert.tm.to.character() %>%
+  lemmatize_strings(dictionary = lexicon::hash_lemmas) %>%
+  VectorSource() %>%
+  VCorpus() %>%
+  tm_map(attachHash)
+```
+
+We can contrast the content of our documents pre and post-cleaning:
+```{r pre_clean, echo=FALSE}
+for (i in 1:3){
+  inspect(disaster_corpus[[i]])
+}
+```
+
+And the same documents after cleaning:
+```{r post_clean, echo=FALSE}
+for (i in 1:3){
+  inspect(disaster_corpus_cleaned[[i]])
+}
+```
+
+Next we convert our corpus to a Document Term Matrix and divide our documents into training data and testing data. We will also filter out any terms which have a sparsity factor of greater than 0.999, i.e. terms which appear in fewer than 0.1% of documents.
+```{r division, echo=TRUE}
+disaster_DTM <- DocumentTermMatrix(disaster_corpus_cleaned) %>%
+  removeSparseTerms(0.999)
+
+inspect(disaster_DTM[1:10, 1:10])
+
+### Partitioning our data and creating a classifier
+## Splitting our data into test and training data
+disaster_raw_train <- disaster_raw[1:3000,]
+disaster_raw_test <- disaster_raw[3001:nrow(disaster_raw),]
+
+disaster_corpus_cleaned_train <- disaster_corpus_cleaned[1:3000]
+disaster_corpus_cleaned_test <- disaster_corpus_cleaned[3001:length(disaster_corpus_cleaned)]
+
+disaster_DTM_train <- disaster_DTM[1:3000,]
+disaster_DTM_test <- disaster_DTM[(3001):nrow(disaster_DTM),]
+```
+
+It is important that our training and testing data have roughly equal proportions of relevant and non-relevant examples. We can check the proportions of these categories in both our testing and training data and evaluate the extent to which their proportions differ:
+```{r proportions, echo=TRUE}
+# Our proportions for our test data
+prop.table(table(disaster_raw_test$relevant))
+# Our proportions for our training data
+prop.table(table(disaster_raw_train$relevant))
+```
+
+Given that our training and testing proportions are within 3% points of each other, we can be be confident that our predictor will not be adversely affected by a proportional discrepancy. 
+
+We need to ensure that the same terms are evaluated across both sets of documents. If a term is present in the testing data but not in the training data, our classifier will be unable to predict its impact on the likelihood of it belonging to either the relevant or non-relevant category. To address this, we can create a dictionary consisting of all terms which occur in our training data and restrict our DTMs to these terms.
+```{r at_least_once, include = FALSE}
+at_least_once <- findFreqTerms(disaster_DTM_train, 1)
+test_matrix <- as.matrix(DocumentTermMatrix(disaster_corpus_cleaned_test, list(dictionary = at_least_once)))
+train_matrix <- as.matrix(DocumentTermMatrix(disaster_corpus_cleaned_train, list(dictionary = at_least_once)))
+```
+
+We can count the number of columns in our DTMs to find the number of terms we will be evaluating:
+```{r, include=TRUE}
+ncol(train_matrix)
+ncol(test_matrix)
+```
+
+For this classifier, we will be binarizing our DTMs. This ensures that all terms are given equal weight when evaluating whether the text is relevant or irrelevant. Repeated terms will not be more likely to influence our predictor towards either categorization. However, classifiers can be constructed which allow for this sort of approach. For the sake of simplicity, we will adhere to a dichotomous coding of our data.
+```{r}
+binarize <- function(x) {
+  x <- ifelse(x > 0, 1, 0)
+  x <- factor(x, 
+              levels = c(0, 1), 
+              labels = c("No", "Yes"))
+}
+
+test_matrix <- apply(test_matrix, 
+                     MARGIN = 2, 
+                     binarize)
+train_matrix <- apply(train_matrix, 
+                      MARGIN = 2, 
+                      binarize)
+```
+
+Now that we have two DTMs consisting of exactly the same terms and each cell is a binary value i.e. a 1 if the term appears in the document and a 0 if it does not, we can finally construct our classifier. To do so, we input our training DTM and R uses machine learning iteration to construct the best predicting algorithm possible (I do not have time to discuss the underlying theory for this process here. For a *very* general overview of how algorithms can use iterations and human-coded data to improve their efficacy, I highly suggest watching CGP Grey's video [How Machines Learn](https://www.youtube.com/watch?v=R9OHn5ZF4Uo)).
+```{r classifier}
+disaster_nb_relevant <- naiveBayes(train_matrix, 
+                                   disaster_raw_train$relevant,
+                                   laplace = 1)
+```
+
+We can check how likely individual terms are to belong to the relevant and non-relevant categories. The following code relays how likely the terms "riot" and "intrusion" are to be found in the relevant and non-relevant categories based on the training data provided:
+```{r}
+# Likelihood of the term 'riot' appearing in relevant and non-relevant tweets
+disaster_nb_relevant$tables$riot
+
+# By comparing the probabilities of the term appearing in relevant and non-relevant tweets, we can see that the term is slightly more likely to appear in tweets which are relevant.
+
+# Likelihood of the term 'intrusion' appearing in relevant and non-relevant tweets
+disaster_nb_relevant$tables$intrusion
+
+# Notice that we do not get return values when checking the proportionality of the term 'intrusion'. One might intuit that this is because our classifier was not trained to recognize this term. To check this, we can see whether the term was included in our dictionary which we used to define our DTMs:
+"riot" %in% at_least_once
+
+"intrusion" %in% at_least_once
+
+# This confirms our intuition.
+```
+
+Now that we have a model which can generally associate terms with relevance, we can use it to classify data which our predictor has never encountered before.
+
+```{r predicting}
+## Predicting relevancy
+disaster_relevant_predict <- predict(disaster_nb_relevant, 
+                                     test_matrix)
+```
+
+Since all of our documents have been encoded by people, we can compare the assigned values of relevancy with the predictions assigned by our classifier. This will allow us to evaluate the accuracy of our model.
+
+```{r assessing_accuracy}
+## Assessing our model's accuracy
+confusionMatrix(disaster_relevant_predict, 
+                disaster_raw_test$relevant)
+```
+
+## Section 2: Cluster Analysis
+What if we would rather explore the topics contained within our documents than predict their categorization? We can do this by using cluster analysis. To do this, we will use a different corpus which has not been sorted by humans. To clean this corpus, I have applied exactly the same steps employed in section 1.
+```{r, include=FALSE}
+health_raw <- readRDS("health_cluster.rds")
+health_corpus <- VCorpus(VectorSource(health_raw$content))
+
+health_corpus_cleaned <- tm_map(health_corpus, removeURL) %>%
+  tm_map(removeUserNames) %>%
+  tm_map(removeSpecialChar) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removeMostPunctuation) %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removeWords, stopwords(kind = "en")) %>%
+  tm_map(removeRogueTags) %>%
+  tm_map(stripWhitespace) %>%
+  convert.tm.to.character() %>%
+  lemmatize_strings(dictionary = lexicon::hash_lemmas) %>%
+  VectorSource() %>%
+  VCorpus() %>%
+  tm_map(attachHash)
+
+health_DTM <- DocumentTermMatrix(health_corpus_cleaned) %>%
+  removeSparseTerms(0.999)
+```
+
+Again, we can quickly preview the contents of our documents before and after cleaning:
+```{r preview_health_corpus, echo=FALSE}
+for (i in 1:3) {
+  inspect(health_corpus[[i]])
+}
+```
+
+And the same documents after cleaning:
+```{r, echo=FALSE}
+for (i in 1:3) {
+  inspect(health_corpus_cleaned[[i]])
+}
+```
+
+To quantify the differences between documents in our corpus, we can construct a vector for each document whose dimensions correspond to the total number of terms in our corpus and whose values denote the frequency with which a term appears in a document. These vectors are inherently unwieldy; each has 1500 dimensions. However, we can use the definition of the dot product to quantify each vector's cosine similarity/dissimilarity to every other vector. This is possible by the definition of the dot product: 
+$$cos(\theta) = \frac{a \cdot b}{||a|| \cdot ||b||}$$ 
+
+Thus, for every two vectors, we have a value which denotes how similar or dissimilar their cosines are. The resulting matrix's values will be the cosine values computed by taking a dot product where the row index represents vector a and the column index represents vector b.
+```{r similar}
+health_DTM <- as.matrix(health_DTM)
+health_cosine <- sim2(health_DTM,
+                      method = "cosine",
+                      norm = "l2")
+```
+
+The resulting matrix's cells denote the cosine of the angles between the vectors representing every document in our corpus. To check whether this is true, we can make a simple prediction: what should the values running down the diagonal from top left to bottom right be in our matrix? If our function has worked correctly, these values should all be equal to 1. This is because the value of every cell whose row and column indices are equal is the cosine of a vector dotted with itself. Since the vectors are identical, the angle between them must be 0. Since the cosine of 0 is 1, all cells with matching row and column indices should have a value of 1. The following code will let us see whether this is true:
+```{r}
+print(health_cosine[1:5, 1:5])
+```
+We can see that the aforementioned diagonal does indeed consist of 1s, affirming our predictions.
+
+At the moment, larger values represent less distance between documents and smaller values represent greater distance. We can invert this model by subtracting the cosine values from 1.
+
+```{r}
+health_cosine_dis <- 1 - health_cosine
+```
+
+Now a value of 1 indicates complete dissimilarity and a value of 0 signifies that the documents are identical. This ensures that our computed clusters are groups of documents which are most similar and not groups which are most dissimilar.
+
+The following code computes the average silhouette width statistic when grouping our documents in groups of between 1 and 20 clusters. The greater the width, the more dissimilar our clusters are. Thus, greater silhouette width signifies more distinct clusters.
+```{r}
+## Making a function which calculates silhouette distances by number of clusters
+ward.D2 = function(diss, k){hcut(diss,
+                                 k, 
+                                 hc_method = "ward.D2")}
+
+## Visualizing these distances
+fviz_nbclust(health_DTM, 
+             FUNcluster = ward.D2, 
+             method = "silhouette", 
+             diss = health_cosine_dis, 
+             k.max = 20)
+```
+
+We can see that the number of clusters which produces the greatest silhouette width is 10. Therefore, sorting our documents into 10 clusters will produce clusters which are most topically distinct from each other.
+
+Running the following code will let us see what terms are occur most frequently in each cluster:
+
+```{r}
+## Dividing the documents into 10 clusters
+health_clusters <- hcut(as.dist(health_cosine_dis), k = 10, method = "ward.D2", isdiss = T)
+
+## Finding the most frequent terms by cluster
+p_words <- colSums(health_DTM) / sum(health_DTM)
+cluster_words <- lapply(unique(health_clusters$cluster), 
+                        function(x){
+  rows <- health_DTM[health_clusters$cluster == x,]
+  rows <- rows[, colSums(rows) > 0]
+  colSums(rows)/sum(rows) - p_words[colnames(rows)]
+})
+
+## Consolidating these terms into a dataframe
+cluster_summary <- data.frame(cluster = unique(health_clusters$cluster),
+  size = as.numeric(table(health_clusters$cluster)),
+  top_words = sapply(cluster_words,
+                     function(d){
+                       paste(names(d)[order(d,
+                                            decreasing = TRUE)][1:5],
+                             collapse = ", ")
+                              }),
+                    stringsAsFactors = FALSE)
+
+cluster_summary
+```
+
+These terms help suggest what the topics of the documents contained within these clusters might be. We can briefly hazard a guess as to what each cluster's central topic might be:
+1. Likely referring to the ebola epidemics in Africa
+2. Some discourse on American regulation of drugs
+3. Perhaps some sort of endorsement of doctors and their expertise
+4. Advice regarding urgent care
+5. This one is less clear. Perhaps something relating to how health trends track between individuals
+6. Some discussion regarding children and health
+7. A discussion on mental health
+8. Heart disease and women
+9. A discussion about which foods might help prevent strokes
+10. A discussion on child nutrition

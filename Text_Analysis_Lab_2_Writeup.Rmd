@@ -1,0 +1,169 @@
+---
+title: "Text_Analysis_Lab_2_Writeup_Test"
+author: "Christopher Carbonaro"
+---
+
+# Preprocessing Tweets: Producing a Corpus and Performing Exploratory Data Analysis
+## Introduction
+This report aims to provide a rudimentary exploration of a data set of tweets produced during the polar vortex of 2019. Employing textual analysis here has the potential to illustrate public perception of extreme weather events and how diction used to discuss politically contentious topics affects discourse. These tweets were collected using the 'rtweet' package and Twitter's API; aggregating tweets containing the terms "Global Warming," "Climate Change," or "Polar Vortex" yielded a data set consisting of 5519 observations. Having already collected this data, it is time to preprocess it and begin examining it.
+```{r setup, include=FALSE}
+setwd("C:/Users/Christopher/Dropbox/College/Junior Year Round 2/Spring Semester/Text Analysis/Text_Analysis_Lab_2")
+req_packages <- c("tm", "tidyverse")
+for (i in 1:length(req_packages)){
+  if (req_packages[i] %in% row.names(installed.packages()) == FALSE){
+    install.packages(req_packages[i])
+  }
+}
+lapply(req_packages, require, character.only = TRUE)
+weather_tweets <- read_csv("C:/Users/Christopher/Dropbox/College/Junior Year Round 2/Spring Semester/Text Analysis/Text_Analysis_Lab_1/weather_tweets.csv")
+```
+## Dealing with Twitter-Specific Preprocessing
+The first step in preprocessing this data is to convert the pertinent text into a corpus. This can be done by using the VCorpus() function:
+```{r building_a_corpus, include=TRUE}
+weather_corpus <- VCorpus(VectorSource(weather_tweets$text))
+```
+Inspecting the data using the inspect() function allows us to examine the text contained within the corpus. Here are the the contents of the first 5 documents collected:
+```{r corpus_v1, include=TRUE, collapse=TRUE}
+for(i in 1:5){
+  inspect(weather_corpus[[i]])
+}
+```
+Before attempting to convert the terms in the documents to more manageable forms, it is a good idea to strip the text of content commonly contained within tweets. Such content includes links to other URLs, twitter handles, and emojis.
+
+The following command creates a user-defined function. When calling removeURL(), the function will pass the argument provided into gsub(). This function searches for matches to the pattern provided and replaces them with the supplied replacement. The pattern provided, "http[^:space:]]\*" searches for text within the character vectors which begin with the characters "http." The pattern [:space:] normally tells gsub() to search for spaces or tabs, but the prefacing of this pattern with "^" inverts the pattern; thus, in this pattern, gsub() searches for any text beginning with "http" which is then followed by characters which are *not* spaces or tabs. Finally, the \* at the end of the pattern tells gsub() to continue matching non-space characters ad-infinitum until it reaches a space.
+
+Once these patterns are found, the text is replaced by a null character vector. Finally, we overwrite the original corpus by using the tm_map() function to pass weather_corpus as an argument to removeURL(). tm_map() applies the gsub() function to each document individually, removing URLs from the tweets.
+
+*IMPORTANT!* Although these functions can be passed directly to the corpus through tm_map(), doing so strips the corpus of its meta data. Rather than do this and subsequently coerce the corpus back to a PlainTextDocument, it is much less destructive to simply use the content_transformer() function within tm_map. This directly alters the text in the documents without converting the content to the class "character."
+```{r corpus_v2, include=TRUE}
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+weather_corpus <- tm_map(weather_corpus, content_transformer(removeURL))
+```
+Inspecting the first 5 documents of the corpus reveals that the URLs have indeed been removed:
+```{r, echo=FALSE}
+for(i in 1:5){
+  inspect(weather_corpus[[i]])
+}
+```
+The following function uses exactly the same logic as the preceding function but strips twitter handles. The pattern sought by gsub() has been replaced with "@\\\\w+" which searches for terms beginning with the "@" symbol and are followed by any combination of alpha and numerical characters, denoted by "\\w". The "+" at the end tells gsub() to apply this to each document one or more times.
+```{r corpus_v3, include=TRUE}
+userNames <- function(x) gsub("@\\w+", "", x)
+weather_corpus <- tm_map(weather_corpus, content_transformer(userNames))
+```
+Again, inspecting the corpus reveals that twitter handles have been removed:
+```{r, echo=T}
+lapply(weather_corpus[1:5], as.character)
+```
+I tried using "[^\x20-\x7E]" as parameters to remove non-UTF8 characters from the corpus, but this did not remove the coding of Unicode characters visible in the 5th tweet. By modifying the gsub() parameters, I managed to eliminate these Unicode symbols; the following argument searches for text beginning with "\<U+" and then accepts any characters which are not spaces until it reaches a "\>" character. It then replaces these with a null character.
+```{r corpus_v4, echo=T}
+removeUnicode <- function(x) gsub("<U+[^[:space:]]*>", " ", x)
+weather_corpus <- tm_map(weather_corpus, content_transformer(removeUnicode))
+```
+Examining the text again should confirm that the text denoting emojis has been removed:
+```{r, echo=F}
+removeSpecial <- function(x) gsub("[^\x20-\x7E]", "", x)
+weather_corpus <- tm_map(weather_corpus, content_transformer(removeSpecial))
+lapply(weather_corpus[1:5], as.character)
+```
+And, amazingly, it appears to have worked (I cannot properly express how happy I was when this executed successfully).
+
+Given that we used content_transformer() within all of our custom functions, the class of our corpus has not been altered and there is no need to convert our corpus back to a PlainTextDocument.
+
+## General Preprocessing
+Let's remove punctuation from all of our tweets:
+```{r corpus_v5}
+weather_corpus <- tm_map(weather_corpus, removePunctuation)
+lapply(weather_corpus[1:5], as.character)
+```
+Next, we can convert all of our uppercase characters to lowercase:
+```{r corpus_v6}
+weather_corpus <- tm_map(weather_corpus, content_transformer(tolower))
+lapply(weather_corpus[1:5], as.character)
+```
+The following command removes numbers:
+```{r corpus_v7}
+weather_corpus <- tm_map(weather_corpus, removeNumbers)
+lapply(weather_corpus[1:5], as.character)
+```
+Before stemming the remaining text, it is a good idea to remove any stopwords.
+```{r corpus_v8}
+weather_corpus <- tm_map(weather_corpus, removeWords, stopwords("en"))
+lapply(weather_corpus[1:5], as.character)
+```
+Now apply stemming:
+```{r corpus_v9}
+weather_corpus <- tm_map(weather_corpus, stemDocument)
+lapply(weather_corpus[1:5], as.character)
+```
+Finally, we can remove excess whitespace:
+```{r corpus_v10}
+weather_corpus <- tm_map(weather_corpus, stripWhitespace)
+lapply(weather_corpus[1:5], as.character)
+```
+
+### The effects of preprocessing
+If we compare the original text of our corpus with the text remaining after preprocessing, it is easy to see how radically the content has been altered.
+```{r corpus_compare, echo=F}
+weather_corpus_compare <- VCorpus(VectorSource(weather_tweets$text))
+lapply(weather_corpus_compare[1:5], as.character)
+lapply(weather_corpus[1:5], as.character)
+```
+This preprocessing helps simplify the text contained within the document. It removes content which might hinder examining the broad picture painted by the data, such as links, twitter handles, and stopwords. However, this exact progression of preprocessing does not need to be followed in all situations. For example, punctuation is necessary in sentiment analysis; eliminating punctuation removes R's ability to determine where and when sentences end. Similarly, stemming words destroys a sentence's syntax. This hinders possibilities for examining document content on a scale larger than analyzing individual words.
+
+Furthermore, the order of applying preprocessing functions matters. For example, if an analyst tried to stem words before removing punctuation, R would not know what to do with words which conclude sentences.
+
+## Creating a DTM
+Now that our corpus is adequately prepared for analysis, we can convert it to a Document Term Matrix. Using the inspect() function allows for quickly surverying our data.
+```{r DTM_1}
+weather_dtm <- DocumentTermMatrix(weather_corpus)
+inspect(weather_dtm)
+```
+It is unsurprising that "change," "climate," "global," "warming," "polar," and "vortex" are some of the most common terms considering that these were the terms used as an index for collecting the data. However, it is noteworthy to see that the most common term was "cause." One might intuite that many of these tweets were discussing what is causing these phenomena. Furthermore, the appearance of the term "weather" seems to support the notion that extreme weather events prompt discussion of the topic.
+
+N.B. I tried removing sparse terms, but something is not functioning properly. Contrary to expectation, my number of terms is *increasing* as I raise my sparse argument. This is something that will require further examination.
+
+## Analyzing the DTM
+Our current DTM is a matrix; the x-axis denotes the term, the y-axis denotes the document, and the table value indicates how many times that term appears in the document. Correspondingly, summing the columns will provide the total number of times a term appeared in the entire corpus (alternatively, summing the rows will give the number of terms in each document). Using colSums, we can produce a named vector from the matrix whose values indicate the the number of times the term appeared. Sorting this vector allows us to rank these terms by frequency. We can then inspect this vector by using head() and tail().
+
+```{r term_frequency, echo=TRUE}
+freq.terms  <- colSums(as.matrix(weather_dtm))
+freq.terms <- sort(freq.terms, decreasing = TRUE)
+head(freq.terms, n=10)
+tail(freq.terms, n=10)
+```
+However, the tail() function reveals that the most infrequent terms are either products of poor preprocessing e.g. "youtrump" should probably be "you" and "trump" or uninformative, such as yrold. We can find terms which have a minimum number of appearances by using findFreqTerms(). The following terms all occur more than 5 times. Given that there are over 1000 terms which meet this standard, I have limited my output to the first 100.
+```{r five_or_more}
+options(max.print = 100)
+findFreqTerms(weather_dtm, 5)
+```
+To graphically display the frequency of these terms, it is best to use the 'ggplot' package. However, ggplot's arguments require the objects to be data frames. Therefore, the freq.terms vector must be converted to a data frame which contains a vector denoting the frequency and a vector denoting the term.
+```{r freq_data_frame}
+## First, create a 1 dimensional data frame from the freq.terms vector. This is a vector with 1 column and 10 rows.
+top.terms <- data.frame(freq.terms[1:10])
+
+## Given that there is only 1 column, the column name can be set with a vector of length 1.
+colnames(top.terms) <- c("Occurrence")
+
+## The terms are already included in the dataframe as the row names, but ggplot requires these variables to be in a vector to access them. It might be tempting to assign these values as a character vector; however, when plotting the chart, ggplot would not know how to plot the terms by descending frequency. Luckily, due to having sorted the freq.terms vector, the row names are already organized in order of decreasing frequency. Therefore, a new column in the top.terms dataframe can be made by turning the row names into factors and defining the levels by the preexisting order of the row names.
+top.terms$terms <- factor(row.names(top.terms), levels = row.names(top.terms))
+```
+With the requisite data organized into a data frame that ggplot will understand, a bar chart can be made with the following commands:
+```{r plotting_frequencies}
+ggplot(top.terms) +
+  geom_col(aes(terms, Occurrence), color= "grey", fill = "#ffff1a") +
+  labs(x = "", title = "Frequency of 10 Most Common Terms") +
+  scale_y_continuous(breaks = seq(0, 5000, 500)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"))
+```
+
+Given that these tweets were collected by using pairs of words rather than individual terms, one should expect there to be a high degree of correlation between "Global" and "Warming," "Polar" and "Vortex," and "Climate" and "Change." To ensure that these tweets were collected properly, using findAssocs() should show a strong correlation between these terms.
+
+```{r correlation}
+findAssocs(weather_dtm, "warm", 0.5)
+findAssocs(weather_dtm, "polar", 0.5)
+findAssocs(weather_dtm, "climat", 0.5)
+```
+
+As expected, there was a high degree of correlation between these terms. Given that the corpus was constructed for the purpose of these terms co-occurring, it would be concerning if there was no correlation; such a discovery would reveal a flaw in this project's methodology.
+
+Interestingly, none of the other most frequently occurring words exhibited a greater than average correlation with any other terms. This suggests that terminology may actually not have an effect on the way this issue is percieved.
