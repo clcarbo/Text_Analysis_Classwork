@@ -29,12 +29,16 @@ lapply(req_packages, require, character.only = TRUE)
 
 ##### Setting up rtweet #####
 
+####
+# Changing the create token parameters for security purposes. Just match these fields to the specifications on the twitter app developer page.
+####
+
 create_token(
-  app = "basic_twitter_webscraper",
-  consumer_key = "26g8Ts9rFGGVUbbLAJYaWe32K",
-  consumer_secret = "vF2tHOgoobsPUs6Kz5trCfDUt4OvSKtfbHK4E2gniWHFGCJLPl",
-  access_token = "1034881142850244608-m2lusmU2uattwZoVeAAYNNKeXyI31J",
-  access_secret = "8xMaqtiiASMSH9ecEVDCta7MWvnE8RfHb3EL4fzmYlfhH")
+  app = "REDACTED",
+  consumer_key = "REDACTED",
+  consumer_secret = "REDACTED",
+  access_token = "REDACTED",
+  access_secret = "REDACTED")
 
 ## Collecting tweets which contain either the term 'polar vortex,' 'climate change,' or 'global warming.' Results are coerced into a dataframe/tibble. Total number of observations is limited to 10,000, retweets are excluded.
 weather_tweets <- search_tweets(q = "'polar vortex' OR 'climate change' OR 'global warming'", n = 10000, include_rts = FALSE, lang = "en")
