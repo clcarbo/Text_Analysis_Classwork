@@ -30,7 +30,7 @@ lapply(req_packages, require, character.only = TRUE)
 ##### Setting up rtweet #####
 
 ####
-# Changing the create token parameters for security purposes. Just match these fields to the specifications on the twitter app developer page.
+# I changed the "create_token" parameters for security purposes. Just match these fields to the specifications on the twitter app developer page.
 ####
 
 create_token(
